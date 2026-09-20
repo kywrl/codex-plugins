@@ -1,7 +1,7 @@
 {
   "name": "codex-toolkit",
   "version": "0.1.0",
-  "description": "每轮结束统计 Codex 时延、token 用量、缓存命中和模型信息；支持可选的 Responses 流量采集。",
+  "description": "每轮结束直接显示 Codex 时延、token 用量、缓存命中和模型信息；不写入持久化存储。",
   "author": {
     "name": "Local developer"
   },
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Codex Toolkit",
     "shortDescription": "查看每轮时延、token 速度、缓存与模型信息。",
-    "longDescription": "通过生命周期 hook 解析本地 transcript，按回合保存统计。可选本地 Responses SSE 代理采集真实请求和响应模型 ID；缺失指标明确标注。",
+    "longDescription": "通过生命周期 hook 解析本地 transcript，并把每回合统计直接显示在输出末尾。可选本地 Responses SSE 代理采集真实请求和响应模型 ID；数据只在进程内存中使用，缺失指标明确标注。",
     "developerName": "Local developer",
     "category": "Productivity",
     "capabilities": [],

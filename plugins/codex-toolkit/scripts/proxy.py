@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import argparse
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import http.client
 import json
-import os
+import sys
+from threading import Lock
 import time
 import uuid
 from urllib.parse import urlsplit
 
-from metrics import connect, data_dir, divide, number, usage
+# 直接运行代理也不会因导入 metrics 而生成 __pycache__。
+sys.dont_write_bytecode = True
+from metrics import divide, usage
 
 MAX_BODY = 32 * 1024 * 1024
 MAX_EVENT = 8 * 1024 * 1024
@@ -26,6 +30,7 @@ class Capture:
     def __init__(self, model, session=None, turn=None):
         self.started = time.perf_counter()
         self.first_output = None
+        self.published = False
         self.record = {
             "id": str(uuid.uuid4()), "session_id": session, "turn_id": turn,
             "request_model_id": model, "response_model_id": None,
@@ -121,25 +126,36 @@ class SSEParser:
                     self.capture.record["parse_error"] = True
 
 
-def associate(db, headers):
-    """显式关联头优先；native session_id 是待真实环境验证的兼容适配。"""
+def associate(headers):
+    """只从请求头取得回合关联信息；采集器不保存回合状态。"""
     session = headers.get("X-Codex-Metrics-Session") or headers.get("session_id")
     turn = headers.get("X-Codex-Metrics-Turn")
-    if not turn and session:
-        row = db.execute("SELECT turn FROM starts WHERE session=? ORDER BY started DESC LIMIT 1", (session,)).fetchone()
-        if row:
-            turn = row[0]
     return session, turn
 
 
-def persist(root, capture):
-    record = capture.record
-    db = connect(root)
-    try:
-        with db:
-            db.execute("INSERT OR REPLACE INTO requests VALUES(?,?,?,?)", (record["id"], record["session_id"], record["turn_id"], json.dumps(record, ensure_ascii=False)))
-    finally:
-        db.close()
+def remember(server, capture):
+    """每个请求发布一次；hook 领取后不会被 finally 再次放回内存。"""
+    record = dict(capture.record)
+    if not record.get("session_id") or not record.get("turn_id"):
+        return
+    request_id = record["id"]
+    with server.records_lock:
+        if capture.published:
+            # 结束事件或 HTTP 状态可能在首次发布后才确定；已被 hook 领取的记录不重新放回。
+            if request_id in server.records:
+                server.records[request_id] = record
+            return
+        capture.published = True
+        server.records[request_id] = record
+        while len(server.records) > server.max_records:
+            server.records.popitem(last=False)
+
+
+def take_records(server, session, turn):
+    """只领取并移除指定回合记录，其他会话保持隔离。"""
+    with server.records_lock:
+        ids = [key for key, record in server.records.items() if record.get("session_id") == session and record.get("turn_id") == turn]
+        return [server.records.pop(key) for key in ids]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -149,14 +165,29 @@ class Handler(BaseHTTPRequestHandler):
         pass  # 不记录带凭据的 URL、headers 或正文。
 
     def do_GET(self):
-        self.send_error(405, "Only POST /responses is supported; disable WebSocket transport")
+        self.send_error(405, "Use POST /responses or POST /metrics")
+
+    def send_metrics(self, request):
+        session, turn = request.get("session_id"), request.get("turn_id")
+        if not isinstance(session, str) or not session or not isinstance(turn, str) or not turn:
+            self.send_error(400, "session_id and turn_id are required")
+            return
+        body = json.dumps({"requests": take_records(self.server, session, turn)}, ensure_ascii=False).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        self.wfile.write(body)
 
     def do_POST(self):
         if self.headers.get("Origin"):
             self.send_error(403, "Browser origins are not accepted")
             return
-        if self.path not in ("/responses", "/v1/responses"):
-            self.send_error(404, "Only Responses create is supported")
+        if self.path not in ("/responses", "/v1/responses", "/metrics"):
+            self.send_error(404, "Unsupported endpoint")
             return
         if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Encoding", "identity") != "identity":
             self.send_error(415, "Disable request compression; Content-Length JSON is required")
@@ -172,18 +203,17 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         try:
             request = json.loads(body)
-            if not isinstance(request, dict) or not isinstance(request.get("model"), str):
+            if not isinstance(request, dict):
                 raise ValueError()
-            if request.get("stream") is not True:
+            if self.path != "/metrics" and (not isinstance(request.get("model"), str) or request.get("stream") is not True):
                 raise ValueError()
         except (ValueError, UnicodeError):
             self.send_error(400, "A model and stream=true are required")
             return
-        db = connect(self.server.data_root)
-        try:
-            session, turn = associate(db, self.headers)
-        finally:
-            db.close()
+        if self.path == "/metrics":
+            self.send_metrics(request)
+            return
+        session, turn = associate(self.headers)
         capture = Capture(request["model"], session, turn)
         target = self.server.upstream
         factory = http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
@@ -219,8 +249,8 @@ class Handler(BaseHTTPRequestHandler):
                         capture.record["parse_error"] = True
                         is_sse = False
                     if capture.record["status"] != "streaming":
-                        # 先写指标，再把结束事件交给 Codex，缩小 Stop 读取竞争窗口。
-                        persist(self.server.data_root, capture)
+                        # 先更新内存记录，再把结束事件交给 Codex，缩小 Stop 读取竞争窗口。
+                        remember(self.server, capture)
                 self.wfile.write(chunk)
                 self.wfile.flush()
             if is_sse:
@@ -234,29 +264,30 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
             capture.finish()
-            persist(self.server.data_root, capture)
+            remember(self.server, capture)
 
 
-def serve(root, upstream, port):
+def serve(upstream, port):
     target = urlsplit(upstream)
     if target.scheme not in ("http", "https") or not target.hostname or target.username or target.password or target.query or target.fragment:
         raise ValueError("upstream 必须是不含凭据和 query 的 HTTP(S) base URL")
     if target.scheme == "http" and target.hostname not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("非本机 upstream 必须使用 HTTPS")
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.data_root, server.upstream = root, target
+    server.upstream = target
+    server.records = OrderedDict()
+    server.records_lock = Lock()
+    server.max_records = 1000
     return server
 
 
 def main():
-    os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--upstream", required=True, help="例如 https://api.openai.com/v1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--data-dir")
     args = parser.parse_args()
-    server = serve(data_dir(args.data_dir), args.upstream, args.port)
-    print(f"Responses 采集器：http://127.0.0.1:{server.server_port}/v1；Ctrl-C 停止", flush=True)
+    server = serve(args.upstream, args.port)
+    print(f"Responses 采集器：http://127.0.0.1:{server.server_port}/v1；数据只保存在内存，Ctrl-C 后丢弃", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

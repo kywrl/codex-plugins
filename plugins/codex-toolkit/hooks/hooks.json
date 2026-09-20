@@ -1,26 +1,14 @@
 {
-  "description": "本地会话统计；只读取 transcript 并写入插件数据目录。",
+  "description": "本地会话统计；回合结束时把摘要直接显示在 Codex 输出末尾，不写入文件或数据库。",
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/scripts/metrics.py\" hook",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/scripts/metrics.py\" hook",
-            "async": true,
+            "command": "python3 -B \"${PLUGIN_ROOT}/scripts/metrics.py\" hook",
             "timeout": 30,
-            "statusMessage": "保存本轮会话统计"
+            "statusMessage": "显示本轮会话统计"
           }
         ]
       }
@@ -30,18 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/scripts/metrics.py\" hook",
-            "timeout": 3
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/scripts/metrics.py\" hook",
+            "command": "python3 -B \"${PLUGIN_ROOT}/scripts/metrics.py\" hook",
             "timeout": 3
           }
         ]

@@ -1,11 +1,13 @@
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from metrics import analyze, compare_model_ids, connect, enrich, read_jsonl
+from metrics import MAX_FOOTER_BYTES, analyze, compare_model_ids, display, enrich, hook_output, read_jsonl
 
 
 def line(ts, typ, payload):
@@ -58,19 +60,76 @@ def test_missing_model_side_is_unknown_not_mismatch():
     assert mismatch is None
 
 
-def test_enrich_adds_per_request_comparisons_and_warning(tmp_path):
-    db = connect(tmp_path)
+def test_enrich_adds_per_request_comparisons_and_warning():
     report = analyze([], "s1", "t1")
-    with db:
-        db.execute(
-            "INSERT INTO requests VALUES(?,?,?,?)",
-            ("a", "s1", "t1", json.dumps({
-                "id": "a", "response_id": "r1", "request_model_id": "gpt-a",
-                "response_model_id": "gpt-served", "status": "completed",
-            })),
-        )
-    result = enrich(db, report)
-    db.close()
+    result = enrich(report, [{
+        "id": "a", "response_id": "r1", "request_model_id": "gpt-a",
+        "response_model_id": "gpt-served", "status": "completed",
+    }])
     assert result["model_id_mismatch"]["value"] is True
     assert result["model_id_comparisons"][0]["match"] is False
     assert any("标识差异" in warning for warning in result["warnings"])
+
+
+def test_display_renders_boolean_without_numeric_formatting():
+    report = analyze([], "s1", "t1")
+    report["model_id_mismatch"]["value"] = False
+    assert "模型标识不一致：否" in display(report)
+
+
+def test_stop_hook_stdout_requests_footer_once_without_writes(tmp_path):
+    transcript = tmp_path / "rollout.jsonl"
+    rows = [
+        line("2026-01-01T00:00:00Z", "event_msg", {"type": "task_started", "turn_id": "t1"}),
+        line("2026-01-01T00:00:00Z", "turn_context", {"turn_id": "t1", "model": "selected-model"}),
+        line("2026-01-01T00:00:01Z", "token_usage_record", {"thread_id": "s1", "turn_id": "t1", "turn_token_usage": {"input_tokens": 100, "cached_input_tokens": 25, "output_tokens": 20}}),
+        line("2026-01-01T00:00:02Z", "event_msg", {"type": "task_complete", "turn_id": "t1", "duration_ms": 2000, "time_to_first_token_ms": 250}),
+    ]
+    transcript.write_text("\n".join(map(json.dumps, rows)) + "\n")
+    before = transcript.read_bytes()
+    # 运行真正的 CLI，并在进程内拒绝任何文件写入或数据库连接。
+    runner = '''
+import os, runpy, sys
+script = sys.argv[1]
+def forbid_writes(event, args):
+    if event == "open" and args[2] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT):
+        raise RuntimeError("file write forbidden")
+    if event in ("os.mkdir", "os.remove", "os.rename", "sqlite3.connect"):
+        raise RuntimeError("persistence forbidden")
+sys.addaudithook(forbid_writes)
+sys.argv = [script, "hook"]
+runpy.run_path(script, run_name="__main__")
+'''
+    event = {"hook_event_name": "Stop", "session_id": "s1", "turn_id": "t1", "transcript_path": str(transcript)}
+    env = dict(os.environ)
+    env.pop("CODEX_METRICS_PROXY", None)
+    process = subprocess.run([sys.executable, "-B", "-c", runner, str(ROOT / "scripts/metrics.py")], input=json.dumps(event), text=True, capture_output=True, cwd=tmp_path, env=env, check=True)
+    output = json.loads(process.stdout)
+    assert output["decision"] == "block"
+    assert "250.00 ms" in output["reason"]
+    assert "25.00%" in output["reason"]
+    assert "10.00 token/s" in output["reason"]
+    assert "selected-model" in output["reason"]
+    assert process.stderr == ""
+    assert list(tmp_path.iterdir()) == [transcript]
+    assert transcript.read_bytes() == before
+    event["stop_hook_active"] = True
+    # 即使续写后的 transcript 不存在，也必须直接返回，防止重复续写。
+    event["transcript_path"] = "/does-not-exist"
+    assert hook_output(event) == {}
+
+
+def test_interrupt_displays_notice_without_continuation(monkeypatch):
+    monkeypatch.delenv("CODEX_METRICS_PROXY", raising=False)
+    output = hook_output({"hook_event_name": "Interrupt", "session_id": "s1", "turn_id": "t1"})
+    assert "systemMessage" in output
+    assert "decision" not in output
+    assert "不可用" in output["systemMessage"]
+
+
+def test_long_footer_is_bounded_to_avoid_hook_output_spill():
+    report = analyze([], "s1", "t1")
+    report["warnings"] = ["warning-" + "x" * 500 for _ in range(100)]
+    footer = display(report)
+    assert len(footer.encode("utf-8")) <= MAX_FOOTER_BYTES
+    assert "截断" in footer
