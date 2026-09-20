@@ -1,22 +1,22 @@
-# codex-session-metrics
+# codex-toolkit
 
 这是一个本地 Codex plugin，用 lifecycle hooks 在回合结束后解析 transcript，并把统计保存到 SQLite。插件默认不保存提示词、消息正文、Authorization header 或响应正文。
 
 ## 安装与信任
 
-把 `plugins/codex-session-metrics` 放入本地 marketplace 后启用插件。安装后在 Codex 中打开 `/hooks`，检查并信任当前 hook 定义；未信任的非托管 hook 会被跳过。
+把 `plugins/codex-toolkit` 放入本地 marketplace 后启用插件。安装后在 Codex 中打开 `/hooks`，检查并信任当前 hook 定义；未信任的非托管 hook 会被跳过。
 
 ```bash
 python3 /Users/cjx/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py \
-  /Users/cjx/projects/codex-plugins/plugins/codex-session-metrics
+  /Users/cjx/projects/codex-plugins/plugins/codex-toolkit
 ```
 
 ## 查看报告
 
 ```bash
-python3 plugins/codex-session-metrics/scripts/metrics.py report
-python3 plugins/codex-session-metrics/scripts/metrics.py report --json
-python3 plugins/codex-session-metrics/scripts/metrics.py requests
+python3 plugins/codex-toolkit/scripts/metrics.py report
+python3 plugins/codex-toolkit/scripts/metrics.py report --json
+python3 plugins/codex-toolkit/scripts/metrics.py requests
 ```
 
 数据默认写入 `$PLUGIN_DATA`；命令行手工查看时默认写入 `$CODEX_HOME/session-metrics`。可通过 `CODEX_METRICS_DATA` 或 `--data-dir` 指定目录。
@@ -40,7 +40,7 @@ Codex transcript 通常能给出 `token_usage_record` 和 `cached_input_tokens`�
 采集器只监听 `127.0.0.1`，仅转发 `POST /responses`（或 `/v1/responses`）的 `stream=true` JSON 请求，不支持 WebSocket、压缩请求体或浏览器 Origin。非本机 upstream 必须使用 HTTPS。
 
 ```bash
-python3 plugins/codex-session-metrics/scripts/proxy.py \
+python3 plugins/codex-toolkit/scripts/proxy.py \
   --upstream https://api.openai.com/v1 --port 8765
 ```
 

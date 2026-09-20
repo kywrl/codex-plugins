@@ -1,5 +1,5 @@
 {
-  "name": "codex-session-metrics",
+  "name": "codex-toolkit",
   "version": "0.1.0",
   "description": "每轮结束统计 Codex 时延、token 用量、缓存命中和模型信息；支持可选的 Responses 流量采集。",
   "author": {
@@ -7,7 +7,7 @@
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "Codex Session Metrics",
+    "displayName": "Codex Toolkit",
     "shortDescription": "查看每轮时延、token 速度、缓存与模型信息。",
     "longDescription": "通过生命周期 hook 解析本地 transcript，按回合保存统计。可选本地 Responses SSE 代理采集真实请求和响应模型 ID；缺失指标明确标注。",
     "developerName": "Local developer",

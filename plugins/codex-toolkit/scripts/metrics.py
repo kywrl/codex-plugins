@@ -345,7 +345,7 @@ def main():
             handle_hook(json.load(sys.stdin), root)
         except Exception as error:
             # 统计失败不影响用户回合；不输出可能包含消息/路径的异常正文。
-            print(f"codex-session-metrics: 统计失败 ({type(error).__name__})", file=sys.stderr)
+            print(f"codex-toolkit: 统计失败 ({type(error).__name__})", file=sys.stderr)
             print(json.dumps({"systemMessage": "会话统计失败，请检查插件数据目录和 transcript 格式。"}, ensure_ascii=False))
         else:
             print("{}")
