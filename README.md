@@ -6,8 +6,8 @@ Codex 插件集合，目前包含 [codex-toolkit](plugins/codex-toolkit/README.m
 
 在每轮结束或中断时，由脚本解析当前会话的 transcript，将统计结果作为 Hook 提示直接显示，不增加模型调用，也不写入数据库或报告文件。
 
-- 每轮只显示首字耗时、输出速度和响应体 `response.model` 三项指标。
-- 可选 Responses SSE 采集器提供首字和输出速度，数据只在内存中暂存，读取后删除。
+- 每轮只显示首字耗时、输出速度和响应模型三项指标，默认直接读取 Codex transcript。
+- 可选 Responses SSE 采集器可用真实流式时间和响应体 `response.model` 覆盖 transcript 回退值；数据只在内存中暂存，读取后删除。
 
 安装方式、指标定义和采集器配置见 [插件文档](plugins/codex-toolkit/README.md)。
 

@@ -1,15 +1,15 @@
 {
   "name": "codex-toolkit",
-  "version": "0.1.0+codex.20260921054913",
-  "description": "每轮结束直接显示 Codex 时延、token 用量、缓存命中和模型信息；不写入持久化存储。",
+  "version": "0.1.0+codex.20260921080416",
+  "description": "每轮结束直接显示 Codex 首字耗时、输出速度和响应模型；不写入持久化存储。",
   "author": {
     "name": "codex-plugins 维护者"
   },
   "repository": "https://github.com/kywrl/codex-plugins",
   "interface": {
     "displayName": "Codex Toolkit",
-    "shortDescription": "查看每轮时延、token 速度、缓存与模型信息。",
-    "longDescription": "通过生命周期 hook 解析本地 transcript，在每回合结束时直接显示脚本生成的统计提示，不调用模型。可选本地 Responses SSE 代理采集真实请求和响应模型 ID；数据只在进程内存中使用，缺失指标明确标注。",
+    "shortDescription": "查看每轮首字耗时、输出速度与响应模型。",
+    "longDescription": "通过生命周期 hook 解析本地 transcript，在每回合结束时直接显示首字耗时、输出速度和模型信息，不调用模型。可选本地 Responses SSE 代理以真实流式时间和 response.model 覆盖 transcript 回退值；数据只在进程内存中使用。",
     "developerName": "codex-plugins 维护者",
     "category": "Productivity",
     "capabilities": [],

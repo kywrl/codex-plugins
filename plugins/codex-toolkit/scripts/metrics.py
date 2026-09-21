@@ -53,11 +53,56 @@ def empty_report():
     }
 
 
+def _output_text_message(payload):
+    """判断 response_item 是否是有实际输出的 assistant 消息。"""
+    if payload.get("type") != "message" or payload.get("role") != "assistant":
+        return False
+    content = payload.get("content")
+    return isinstance(content, list) and any(
+        isinstance(item, dict) and item.get("type") == "output_text" and item.get("text")
+        for item in content
+    )
+
+
+def _model_from_transcript(payload):
+    """只读取 transcript 的结构化模型字段，不从消息正文猜测模型。"""
+    model = payload.get("model")
+    if isinstance(model, str) and model:
+        return model
+    response = payload.get("response")
+    if isinstance(response, dict):
+        model = response.get("model")
+        if isinstance(model, str) and model:
+            return model
+    return None
+
+
+def _usage_output_tokens(payload):
+    usage = payload.get("turn_token_usage")
+    if not isinstance(usage, dict):
+        usage = payload.get("usage")
+    return number(usage.get("output_tokens")) if isinstance(usage, dict) else None
+
+
 def analyze(records, session_id, turn_id):
-    """从 transcript 取得首字时间；输出速度和响应模型来自 SSE 采集器。"""
+    """从 transcript 取得三项指标；Responses 代理可在之后提供更精确的覆盖值。
+
+    Codex transcript 会记录 turn_context.model 和 token_usage_record，但不会记录
+    原始 SSE 的 response.model 或流式起止时间。因此这里使用 transcript 的模型、
+    output token 用量和回合耗时计算本地可用的回退值；启用 proxy 时 enrich() 会
+    用真实响应模型和流式耗时覆盖它们。
+    """
     started = None
+    ended = None
+    duration_ms = None
     first_message = None
     native_first_char = None
+    transcript_model = None
+    usage_output = None
+    usage_records = []
+    assistant_messages = []
+    active = False
+    saw_turn_marker = False
 
     for record in records:
         if not isinstance(record, dict):
@@ -68,25 +113,88 @@ def analyze(records, session_id, turn_id):
         kind = record.get("type")
         event = payload.get("type") if kind == "event_msg" else None
         at = timestamp(record.get("timestamp"))
+        matching_turn = payload.get("turn_id") == turn_id
 
-        if event == "task_started" and payload.get("turn_id") == turn_id and at is not None:
-            started = at if started is None else min(started, at)
-        elif event == "task_complete" and payload.get("turn_id") == turn_id:
-            native_first_char = number(payload.get("time_to_first_token_ms"))
-        elif kind == "response_item" and payload.get("type") == "message" and payload.get("role") == "assistant" and at is not None:
-            content = payload.get("content")
-            if isinstance(content, list) and any(
-                isinstance(item, dict) and item.get("type") == "output_text" and item.get("text")
-                for item in content
-            ):
+        if event == "task_started" and matching_turn:
+            saw_turn_marker = True
+            active = True
+            if at is not None:
+                started = at if started is None else min(started, at)
+            continue
+
+        if kind == "turn_context" and matching_turn:
+            saw_turn_marker = True
+            active = True
+            transcript_model = _model_from_transcript(payload) or transcript_model
+            continue
+
+        if event == "task_complete" and matching_turn:
+            saw_turn_marker = True
+            active = False
+            if at is not None:
+                ended = at if ended is None else max(ended, at)
+            value = number(payload.get("duration_ms"))
+            if value is not None:
+                duration_ms = value
+            value = number(payload.get("time_to_first_token_ms"))
+            if value is not None:
+                native_first_char = value
+            continue
+
+        if kind == "token_usage_record" and matching_turn:
+            # A turn may contain several model responses around tool calls. The
+            # cumulative turn_token_usage is preferred; usage is the per-response
+            # fallback used by older transcript versions.
+            record_session = payload.get("session_id") or payload.get("thread_id")
+            if record_session is not None and record_session != session_id:
+                continue
+            saw_turn_marker = True
+            value = _usage_output_tokens(payload)
+            if value is not None:
+                if isinstance(payload.get("turn_token_usage"), dict):
+                    usage_output = value
+                else:
+                    usage_records.append(value)
+            if at is not None:
+                ended = at if ended is None else max(ended, at)
+            continue
+
+        if kind == "response_item" and at is not None and _output_text_message(payload):
+            assistant_messages.append(at)
+            if active:
                 first_message = at if first_message is None else min(first_message, at)
+                transcript_model = _model_from_transcript(payload) or transcript_model
+
+    # Some older test fixtures and transcripts only contain task_started plus
+    # response_item, so keep the fallback permissive when no turn marker exists.
+    if first_message is None and not saw_turn_marker and assistant_messages:
+        first_message = min(assistant_messages)
+
+    if usage_output is None and usage_records:
+        usage_output = sum(usage_records)
 
     first_char_seconds = native_first_char / 1000 if native_first_char is not None else None
     if first_char_seconds is None and started is not None and first_message is not None and first_message >= started:
         first_char_seconds = first_message - started
 
+    # task_complete.duration_ms includes the waiting period before the first
+    # token. Remove that period to approximate generation speed from transcript.
+    output_speed = None
+    if usage_output is not None:
+        total_ms = duration_ms
+        if total_ms is None and started is not None and ended is not None and ended >= started:
+            total_ms = (ended - started) * 1000
+        first_ms = first_char_seconds * 1000 if first_char_seconds is not None else None
+        if total_ms is not None and first_ms is not None and total_ms > first_ms:
+            generation_ms = total_ms - first_ms
+        else:
+            generation_ms = total_ms
+        output_speed = divide(usage_output, generation_ms / 1000 if generation_ms is not None else None)
+
     report = empty_report()
     report["first_char_seconds"] = first_char_seconds
+    report["output_tokens_per_second"] = output_speed
+    report["response_model"] = transcript_model
     return report
 
 

@@ -12,7 +12,7 @@ def line(ts, typ, payload):
     return {"timestamp": ts, "type": typ, "payload": payload}
 
 
-def test_analyze_keeps_only_the_first_char_metric(tmp_path):
+def test_analyze_leaves_metrics_unavailable_when_fields_are_missing(tmp_path):
     path = tmp_path / "rollout.jsonl"
     rows = [
         line("2026-01-01T00:00:00Z", "event_msg", {"type": "task_started", "turn_id": "t1"}),
@@ -36,6 +36,44 @@ def test_analyze_falls_back_to_first_assistant_message_timestamp():
     assert report["first_char_seconds"] == 1
 
 
+def test_analyze_reads_output_speed_and_model_from_transcript():
+    report = analyze([
+        line("2026-01-01T00:00:00Z", "event_msg", {"type": "task_started", "turn_id": "t1"}),
+        line("2026-01-01T00:00:00.100Z", "turn_context", {"turn_id": "t1", "model": "gpt-6-astra"}),
+        line("2026-01-01T00:00:02Z", "response_item", {
+            "type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hello"}],
+        }),
+        line("2026-01-01T00:00:04.900Z", "token_usage_record", {
+            "thread_id": "s1", "turn_id": "t1", "turn_token_usage": {"output_tokens": 100},
+        }),
+        line("2026-01-01T00:00:05Z", "event_msg", {
+            "type": "task_complete", "turn_id": "t1", "duration_ms": 5000,
+            "time_to_first_token_ms": 1000,
+        }),
+    ], "s1", "t1")
+    assert report["first_char_seconds"] == 1
+    assert report["output_tokens_per_second"] == 25
+    assert report["response_model"] == "gpt-6-astra"
+
+
+def test_analyze_sums_per_response_usage_for_older_transcripts():
+    report = analyze([
+        line("2026-01-01T00:00:00Z", "event_msg", {"type": "task_started", "turn_id": "t1"}),
+        line("2026-01-01T00:00:00.100Z", "turn_context", {"turn_id": "t1", "model": "gpt-5"}),
+        line("2026-01-01T00:00:02Z", "token_usage_record", {
+            "thread_id": "s1", "turn_id": "t1", "usage": {"output_tokens": 10},
+        }),
+        line("2026-01-01T00:00:03Z", "token_usage_record", {
+            "thread_id": "s1", "turn_id": "t1", "usage": {"output_tokens": 20},
+        }),
+        line("2026-01-01T00:00:03Z", "event_msg", {
+            "type": "task_complete", "turn_id": "t1", "duration_ms": 3000,
+            "time_to_first_token_ms": 1000,
+        }),
+    ], "s1", "t1")
+    assert report["output_tokens_per_second"] == 15
+
+
 def test_enrich_uses_response_model_and_output_speed():
     report = analyze([], "s1", "t1")
     result = enrich(report, [{
@@ -47,6 +85,24 @@ def test_enrich_uses_response_model_and_output_speed():
     assert result["first_char_seconds"] == 0.25
     assert result["output_tokens_per_second"] == 20 / 1.75
     assert result["response_model"] == "served-model"
+
+
+def test_proxy_metrics_override_transcript_fallbacks():
+    result = enrich({
+        "first_char_seconds": 1,
+        "output_tokens_per_second": 25,
+        "response_model": "gpt-6-astra",
+    }, [{
+        "ttft_ms": 250,
+        "generation_duration_ms": 2000,
+        "output_tokens": 80,
+        "response_model_id": "served-model",
+    }])
+    assert result == {
+        "first_char_seconds": 0.25,
+        "output_tokens_per_second": 40,
+        "response_model": "served-model",
+    }
 
 
 def test_display_is_exactly_one_line_with_three_metrics():

@@ -46,7 +46,7 @@ codex plugin list --available --marketplace codex-plugins
 [CodexToolkit] 首字：n s ｜输出速度：n tok/s | 响应模型：xxx
 ```
 
-首字是从用户消息发送成功到开始收到模型消息的时长；输出速度是从开始收到模型消息到模型消息输出结束期间的平均 token/s；响应模型只取响应体的 `response.model`。缺少数据时显示为“不可用”。
+默认情况下，首字读取 `task_complete.time_to_first_token_ms`，输出速度使用本轮 `turn_token_usage.output_tokens / (duration_ms - time_to_first_token_ms)`，响应模型读取当前回合的 `turn_context.model`。这样普通 Codex Desktop 会话不需要额外代理即可显示三项指标。若启用下方 Responses SSE 采集器，首字、输出速度和响应模型会分别由真实流式时间、响应 usage 和响应体 `response.model` 覆盖。只有 transcript 与采集器均未提供所需字段时才显示“不可用”。
 
 ### 可选 Responses SSE 采集器
 
@@ -65,7 +65,7 @@ python3 plugins/codex-toolkit/scripts/proxy.py \
 export CODEX_METRICS_PROXY=http://127.0.0.1:8765
 ```
 
-回合结束时，hook 从采集器的本机内存端点一次性领取当前 session/turn 的请求记录并把三项指标合并到摘要；领取后记录立即丢弃。不设置该变量时，首字仍可从 transcript 获取，输出速度和响应模型显示为不可用。
+回合结束时，hook 从采集器的本机内存端点一次性领取当前 session/turn 的请求记录并把三项指标合并到摘要；领取后记录立即丢弃。不设置该变量时，三项指标均从 transcript 读取。对于包含工具调用的长回合，transcript 的输出速度会包含工具等待时间；采集器提供的流式速度更精确。
 
 ### 手工分析
 
@@ -84,7 +84,7 @@ python3 plugins/codex-toolkit/scripts/metrics.py analyze \
   --proxy http://127.0.0.1:8765
 ```
 
-Codex 桌面端的 ChatGPT 登录流量由宿主端管理，插件 hook 没有原始 HTTP 请求/响应体访问权；要测量真实请求/响应模型，需要在你控制的 Responses API provider 或上述本地采集器路径中运行。
+Codex 桌面端的 ChatGPT 登录流量由宿主端管理，插件 hook 没有原始 HTTP 请求/响应体访问权；因此未启用采集器时显示的是 `turn_context.model`，不是服务端响应体中的模型 ID。要测量真实流式速度和 `response.model`，需要在你控制的 Responses API provider 或上述本地采集器路径中运行。
 
 ## 开发
 
@@ -93,7 +93,7 @@ Codex 桌面端的 ChatGPT 登录流量由宿主端管理，插件 hook 没有�
 - `.codex-plugin/plugin.json`：插件元数据和 UI 描述。
 - `hooks/hooks.json`：`Stop`、`Interrupt` 生命周期 hook 定义。
 - `scripts/run_metrics_hook.sh`：为桌面应用解析可用的 `python3` 后启动 hook。
-- `scripts/metrics.py`：读取首字所需 transcript、合并采集器数据并生成单行 hook 输出。
+- `scripts/metrics.py`：读取 transcript 中的三项回合指标、合并采集器数据并生成单行 hook 输出。
 - `scripts/proxy.py`：可选的本地 Responses SSE 采集器，仅在进程内保存三项指标所需记录。
 - `tests/test_metrics.py`：首字、输出速度和单行 hook 输出测试。
 - `tests/test_proxy.py`：SSE 解析、响应模型、内存记录和领取隔离测试。
@@ -144,6 +144,6 @@ python3 plugins/codex-toolkit/scripts/proxy.py --help
 
 - hook 只读取宿主传入的 transcript 和环境变量，不调用模型，不写文件、数据库或其他持久化存储。
 - 采集器只监听回环地址，按 `session_id` 和 `turn_id` 隔离记录；hook 领取后立即删除记录。
-- 请求模型 ID 只能来自请求 JSON，响应模型 ID 只能来自 SSE 响应；缺少任一侧时比较结果必须保持未知，不能推断模型替换。
+- transcript 模型只代表 `turn_context.model`；真实响应模型 ID 只能来自 SSE 响应，不能据此推断模型替换。
 - usage 缺失时指标显示为 `null`；不能用字符数或 delta 数量估算 token。
 - 修改摘要字段或 hook 协议时，应同步更新测试和本 README 的指标说明。
