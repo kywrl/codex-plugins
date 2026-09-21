@@ -1,6 +1,6 @@
 {
   "name": "codex-toolkit",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20260921035342",
   "description": "每轮结束直接显示 Codex 时延、token 用量、缓存命中和模型信息；不写入持久化存储。",
   "author": {
     "name": "codex-plugins 维护者"

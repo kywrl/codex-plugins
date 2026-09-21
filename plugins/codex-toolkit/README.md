@@ -38,6 +38,8 @@ codex plugin list --available --marketplace codex-plugins
 
 `Stop` 和 `Interrupt` hook 使用同步命令，向标准输出返回 `{"systemMessage": "脚本生成的统计摘要"}`，并以退出码 `0` 结束。插件不返回 `decision: "block"`、续写提示或模型上下文。摘要在回合结束时作为独立 Hook 提示显示，具体位置和样式由 Codex 宿主决定，不改写助手正文。协议依据：[OpenAI Docs — Hooks](https://learn.chatgpt.com/docs/hooks#common-output-fields)。
 
+插件按默认约定从 `hooks/hooks.json` 加载 hook；hook 命令通过 `scripts/run_metrics_hook.sh` 查找 `python3`，以兼容从桌面应用启动时与终端不同的 `PATH`。修改 hook 定义后需要重新信任该 hook，并新建会话。
+
 统计截至 hook 执行时。若此时 transcript 尚未提供 `task_complete`，原生首 token 时长会显示为不可用，不额外调用模型补齐。摘要有长度上限，超出时截断，不另存完整报告。
 
 ### 指标
@@ -96,6 +98,7 @@ Codex 桌面端的 ChatGPT 登录流量由宿主端管理，插件 hook 没有�
 
 - `.codex-plugin/plugin.json`：插件元数据和 UI 描述。
 - `hooks/hooks.json`：`Stop`、`Interrupt` 生命周期 hook 定义。
+- `scripts/run_metrics_hook.sh`：为桌面应用解析可用的 `python3` 后启动 hook。
 - `scripts/metrics.py`：读取 transcript、计算指标、生成 hook 输出和手工分析结果。
 - `scripts/proxy.py`：可选的本地 Responses SSE 采集器，仅在进程内保存请求记录。
 - `tests/test_metrics.py`：transcript、指标计算和 hook 输出测试。

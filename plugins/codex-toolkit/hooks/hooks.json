@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -B \"${PLUGIN_ROOT}/scripts/metrics.py\" hook",
+            "command": "sh \"${PLUGIN_ROOT}/scripts/run_metrics_hook.sh\"",
+            "commandWindows": "py -3 -B \"${PLUGIN_ROOT}\\scripts\\metrics.py\" hook",
             "timeout": 30,
             "statusMessage": "显示本轮会话统计"
           }
@@ -18,7 +19,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -B \"${PLUGIN_ROOT}/scripts/metrics.py\" hook",
+            "command": "sh \"${PLUGIN_ROOT}/scripts/run_metrics_hook.sh\"",
+            "commandWindows": "py -3 -B \"${PLUGIN_ROOT}\\scripts\\metrics.py\" hook",
             "timeout": 3
           }
         ]
