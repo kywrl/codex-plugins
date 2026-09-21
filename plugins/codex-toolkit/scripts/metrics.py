@@ -323,7 +323,11 @@ def hook_output(event):
     report = handle_hook(event)
     if report is None:
         return {}
-    # 直接返回脚本生成的文本，由宿主显示为 Hook 提示，不触发模型续写。
+    # Stop 显式声明继续当前流程。Desktop 的部分版本只会把带有
+    # common-output 字段的 Stop 结果转发到 Hook 提示面板；Interrupt
+    # 不支持 continue，因此保持只返回 systemMessage。
+    if event.get("hook_event_name") == "Stop":
+        return {"continue": True, "systemMessage": display(report)}
     return {"systemMessage": display(report)}
 
 
@@ -338,11 +342,17 @@ def main():
     imp.add_argument("--proxy", help="本机 Responses 采集器 URL；只读取其内存数据")
     args = parser.parse_args()
     if args.command == "hook":
+        event = None
         try:
-            output = hook_output(json.load(sys.stdin))
+            event = json.load(sys.stdin)
+            output = hook_output(event)
         except Exception as error:
             print(f"codex-toolkit: 统计失败 ({type(error).__name__})", file=sys.stderr)
-            print(json.dumps({"systemMessage": "会话统计失败，请检查 transcript 格式和插件配置。"}, ensure_ascii=False))
+            if isinstance(event, dict) and event.get("hook_event_name") == "Stop":
+                output = {"continue": True, "systemMessage": "会话统计失败，请检查 transcript 格式和插件配置。"}
+            else:
+                output = {"systemMessage": "会话统计失败，请检查 transcript 格式和插件配置。"}
+            print(json.dumps(output, ensure_ascii=False))
         else:
             print(json.dumps(output, ensure_ascii=False))
         return

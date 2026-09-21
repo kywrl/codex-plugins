@@ -36,7 +36,7 @@ codex plugin list --available --marketplace codex-plugins
 
 安装后在 Codex 中打开 `/hooks`，检查并信任当前 hook 定义；安装插件不会自动信任非托管 hook，未信任的 hook 会被跳过。启用插件后请新建会话，让宿主加载最新的插件副本。
 
-`Stop` 和 `Interrupt` hook 使用同步命令，向标准输出返回 `{"systemMessage": "脚本生成的统计摘要"}`，并以退出码 `0` 结束。插件不返回 `decision: "block"`、续写提示或模型上下文。摘要在回合结束时作为独立 Hook 提示显示，具体位置和样式由 Codex 宿主决定，不改写助手正文。协议依据：[OpenAI Docs — Hooks](https://learn.chatgpt.com/docs/hooks#common-output-fields)。
+`Stop` hook 使用同步命令，向标准输出返回 `{"continue": true, "systemMessage": "脚本生成的统计摘要"}`；`Interrupt` 返回 `{"systemMessage": "脚本生成的统计摘要"}`，两者均以退出码 `0` 结束。Stop 显式返回 `continue: true` 是为了兼容 Codex Desktop 的 hook 结果转发；插件不返回 `decision: "block"`、续写提示或模型上下文。摘要在回合结束时作为独立 Hook 提示显示，具体位置和样式由 Codex 宿主决定，不改写助手正文。协议依据：[OpenAI Docs — Hooks](https://learn.chatgpt.com/docs/hooks#common-output-fields)。
 
 插件按默认约定从 `hooks/hooks.json` 加载 hook；hook 命令通过 `scripts/run_metrics_hook.sh` 查找 `python3`，以兼容从桌面应用启动时与终端不同的 `PATH`。修改 hook 定义后需要重新信任该 hook，并新建会话。
 

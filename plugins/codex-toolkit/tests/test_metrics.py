@@ -109,7 +109,8 @@ runpy.run_path(script, run_name="__main__")
     env.pop("CODEX_METRICS_PROXY", None)
     process = subprocess.run([sys.executable, "-B", "-c", runner, str(ROOT / "scripts/metrics.py")], input=json.dumps(event), text=True, capture_output=True, cwd=tmp_path, env=env, check=True)
     output = json.loads(process.stdout)
-    assert set(output) == {"systemMessage"}
+    assert set(output) == {"systemMessage", "continue"}
+    assert output["continue"] is True
     assert "250.00 ms" in output["systemMessage"]
     assert "25.00%" in output["systemMessage"]
     assert "10.00 token/s" in output["systemMessage"]
@@ -124,6 +125,12 @@ def test_interrupt_displays_notice_without_continuation(monkeypatch):
     output = hook_output({"hook_event_name": "Interrupt", "session_id": "s1", "turn_id": "t1"})
     assert set(output) == {"systemMessage"}
     assert "不可用" in output["systemMessage"]
+
+
+def test_stop_explicitly_continues_without_using_block_decision():
+    output = hook_output({"hook_event_name": "Stop", "session_id": "s1", "turn_id": "t1"})
+    assert output["continue"] is True
+    assert "decision" not in output
 
 
 def test_long_footer_is_bounded_to_avoid_hook_output_spill():
