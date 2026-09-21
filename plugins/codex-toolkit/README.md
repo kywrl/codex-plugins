@@ -1,6 +1,6 @@
 # codex-toolkit
 
-这是一个本地 Codex plugin。每轮结束时，插件读取当前 transcript，计算会话指标，并把摘要直接显示在本轮 Codex 输出末尾。插件不会写入 SQLite、文件或其他持久化存储；进程结束后，统计数据即丢弃。
+这是一个本地 Codex plugin。每轮结束时，插件读取当前 transcript，由脚本计算并输出统计摘要，交给 Codex 显示为 Hook 提示，不产生额外模型调用。插件不会写入 SQLite、文件或其他持久化存储；进程结束后，统计数据即丢弃。
 
 ## 安装与信任
 
@@ -11,7 +11,9 @@ python3 /Users/cjx/.codex/skills/.system/plugin-creator/scripts/validate_plugin.
   /Users/cjx/projects/codex-plugins/plugins/codex-toolkit
 ```
 
-`Stop` hook 使用同步命令，先计算摘要，再请求一次只输出统计的助手续写，因此统计会出现在本轮回复的末尾。这个续写会额外消耗一次模型调用，并且统计只覆盖追加摘要之前的任务；`stop_hook_active` 会阻止它再次触发。`Interrupt` hook 不能继续生成正文，因此只通过界面提示显示已完成的部分统计。输出保持简短，避免触发 Codex 对超长 hook 输出的溢出处理。
+`Stop` 和 `Interrupt` hook 使用同步命令，向标准输出返回 `{"systemMessage": "脚本生成的统计摘要"}`，并以退出码 `0` 结束。插件不返回 `decision: "block"`、续写提示或模型上下文。摘要在回合结束时作为独立 Hook 提示显示，具体位置和样式由 Codex 宿主决定，不改写助手正文。协议依据：[OpenAI Docs — Hooks](https://learn.chatgpt.com/docs/hooks#common-output-fields)。
+
+统计截至 hook 执行时。若此时 transcript 尚未提供 `task_complete`，原生首 token 时长会显示为不可用，不额外调用模型补齐。摘要有长度上限，超出时截断，不另存完整报告。
 
 ## 指标
 

@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -77,7 +78,8 @@ def test_display_renders_boolean_without_numeric_formatting():
     assert "模型标识不一致：否" in display(report)
 
 
-def test_stop_hook_stdout_requests_footer_once_without_writes(tmp_path):
+@pytest.mark.parametrize("stop_hook_active", [False, True])
+def test_stop_hook_stdout_displays_summary_without_continuation_or_writes(tmp_path, stop_hook_active):
     transcript = tmp_path / "rollout.jsonl"
     rows = [
         line("2026-01-01T00:00:00Z", "event_msg", {"type": "task_started", "turn_id": "t1"}),
@@ -87,7 +89,7 @@ def test_stop_hook_stdout_requests_footer_once_without_writes(tmp_path):
     ]
     transcript.write_text("\n".join(map(json.dumps, rows)) + "\n")
     before = transcript.read_bytes()
-    # 运行真正的 CLI，并在进程内拒绝任何文件写入或数据库连接。
+    # 运行真正的 CLI，拒绝文件写入、数据库连接和网络连接。
     runner = '''
 import os, runpy, sys
 script = sys.argv[1]
@@ -96,34 +98,31 @@ def forbid_writes(event, args):
         raise RuntimeError("file write forbidden")
     if event in ("os.mkdir", "os.remove", "os.rename", "sqlite3.connect"):
         raise RuntimeError("persistence forbidden")
+    if event == "socket.connect":
+        raise RuntimeError("network forbidden")
 sys.addaudithook(forbid_writes)
 sys.argv = [script, "hook"]
 runpy.run_path(script, run_name="__main__")
 '''
-    event = {"hook_event_name": "Stop", "session_id": "s1", "turn_id": "t1", "transcript_path": str(transcript)}
+    event = {"hook_event_name": "Stop", "session_id": "s1", "turn_id": "t1", "transcript_path": str(transcript), "stop_hook_active": stop_hook_active}
     env = dict(os.environ)
     env.pop("CODEX_METRICS_PROXY", None)
     process = subprocess.run([sys.executable, "-B", "-c", runner, str(ROOT / "scripts/metrics.py")], input=json.dumps(event), text=True, capture_output=True, cwd=tmp_path, env=env, check=True)
     output = json.loads(process.stdout)
-    assert output["decision"] == "block"
-    assert "250.00 ms" in output["reason"]
-    assert "25.00%" in output["reason"]
-    assert "10.00 token/s" in output["reason"]
-    assert "selected-model" in output["reason"]
+    assert set(output) == {"systemMessage"}
+    assert "250.00 ms" in output["systemMessage"]
+    assert "25.00%" in output["systemMessage"]
+    assert "10.00 token/s" in output["systemMessage"]
+    assert "selected-model" in output["systemMessage"]
     assert process.stderr == ""
     assert list(tmp_path.iterdir()) == [transcript]
     assert transcript.read_bytes() == before
-    event["stop_hook_active"] = True
-    # 即使续写后的 transcript 不存在，也必须直接返回，防止重复续写。
-    event["transcript_path"] = "/does-not-exist"
-    assert hook_output(event) == {}
 
 
 def test_interrupt_displays_notice_without_continuation(monkeypatch):
     monkeypatch.delenv("CODEX_METRICS_PROXY", raising=False)
     output = hook_output({"hook_event_name": "Interrupt", "session_id": "s1", "turn_id": "t1"})
-    assert "systemMessage" in output
-    assert "decision" not in output
+    assert set(output) == {"systemMessage"}
     assert "不可用" in output["systemMessage"]
 
 
