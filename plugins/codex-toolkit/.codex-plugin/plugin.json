@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "description": "每轮结束直接显示 Codex 时延、token 用量、缓存命中和模型信息；不写入持久化存储。",
   "author": {
-    "name": "Local developer"
+    "name": "codex-plugins 维护者"
   },
-  "skills": "./skills/",
+  "repository": "https://github.com/kywrl/codex-plugins",
   "interface": {
     "displayName": "Codex Toolkit",
     "shortDescription": "查看每轮时延、token 速度、缓存与模型信息。",
     "longDescription": "通过生命周期 hook 解析本地 transcript，在每回合结束时直接显示脚本生成的统计提示，不调用模型。可选本地 Responses SSE 代理采集真实请求和响应模型 ID；数据只在进程内存中使用，缺失指标明确标注。",
-    "developerName": "Local developer",
+    "developerName": "codex-plugins 维护者",
     "category": "Productivity",
     "capabilities": [],
     "defaultPrompt": "查看最近一轮 Codex 会话统计，并说明指标来源和缺失原因。"
