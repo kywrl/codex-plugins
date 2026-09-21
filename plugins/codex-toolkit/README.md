@@ -40,19 +40,13 @@ codex plugin list --available --marketplace codex-plugins
 
 插件按默认约定从 `hooks/hooks.json` 加载 hook；hook 命令通过 `scripts/run_metrics_hook.sh` 查找 `python3`，以兼容从桌面应用启动时与终端不同的 `PATH`。修改 hook 定义后需要重新信任该 hook，并新建会话。
 
-统计截至 hook 执行时。若此时 transcript 尚未提供 `task_complete`，原生首 token 时长会显示为不可用，不额外调用模型补齐。摘要有长度上限，超出时截断，不另存完整报告。
+统计截至 hook 执行时；输出始终只有一行：
 
-### 指标
+```text
+[CodexToolkit] 首字：n s ｜输出速度：n tok/s | 响应模型：xxx
+```
 
-- `ttft_ms`：优先使用 Codex transcript 的 `task_complete.time_to_first_token_ms`。
-- `turn_output_tokens_per_second`：该回合输出 token ÷ 整个回合耗时，包含工具等待。
-- `generation_tokens_per_second`：启用下方 SSE 采集器且响应有完整 usage 时给出；使用非 reasoning 输出 token ÷ 首个输出 delta 到完成的时长。
-- `selected_model_ids`：来自 transcript 的 `turn_context.model`，表示 Codex 选择值。
-- `request_model_ids`：只来自采集器实际读取的请求 JSON `model`；不会用 `turn_context.model` 冒充原始请求值。
-- `response_model_ids`：只来自采集器实际读取的 SSE `response.model`。
-- `model_id_comparisons`：按请求比较请求体模型和响应体模型；缺少任一端时保持未知。
-- `model_id_mismatch`：有完整请求对比且出现不一致时为 `true`；这只是标识差异，不直接判定发生了模型替换。
-- `cache_hit_rate`：`cached_input_tokens / input_tokens`。没有真实 usage 时为 `null`，不会从字符数估算 token。
+首字是从用户消息发送成功到开始收到模型消息的时长；输出速度是从开始收到模型消息到模型消息输出结束期间的平均 token/s；响应模型只取响应体的 `response.model`。缺少数据时显示为“不可用”。
 
 ### 可选 Responses SSE 采集器
 
@@ -71,7 +65,7 @@ python3 plugins/codex-toolkit/scripts/proxy.py \
 export CODEX_METRICS_PROXY=http://127.0.0.1:8765
 ```
 
-回合结束时，hook 从采集器的本机内存端点一次性领取当前 session/turn 的请求记录并把模型信息合并到摘要；领取后记录立即丢弃。不设置该变量时，只显示 transcript 能提供的指标。
+回合结束时，hook 从采集器的本机内存端点一次性领取当前 session/turn 的请求记录并把三项指标合并到摘要；领取后记录立即丢弃。不设置该变量时，首字仍可从 transcript 获取，输出速度和响应模型显示为不可用。
 
 ### 手工分析
 
@@ -99,10 +93,10 @@ Codex 桌面端的 ChatGPT 登录流量由宿主端管理，插件 hook 没有�
 - `.codex-plugin/plugin.json`：插件元数据和 UI 描述。
 - `hooks/hooks.json`：`Stop`、`Interrupt` 生命周期 hook 定义。
 - `scripts/run_metrics_hook.sh`：为桌面应用解析可用的 `python3` 后启动 hook。
-- `scripts/metrics.py`：读取 transcript、计算指标、生成 hook 输出和手工分析结果。
-- `scripts/proxy.py`：可选的本地 Responses SSE 采集器，仅在进程内保存请求记录。
-- `tests/test_metrics.py`：transcript、指标计算和 hook 输出测试。
-- `tests/test_proxy.py`：SSE 解析、模型 ID、内存记录和领取隔离测试。
+- `scripts/metrics.py`：读取首字所需 transcript、合并采集器数据并生成单行 hook 输出。
+- `scripts/proxy.py`：可选的本地 Responses SSE 采集器，仅在进程内保存三项指标所需记录。
+- `tests/test_metrics.py`：首字、输出速度和单行 hook 输出测试。
+- `tests/test_proxy.py`：SSE 解析、响应模型、内存记录和领取隔离测试。
 
 ### 本地校验
 

@@ -10,7 +10,7 @@ from proxy import Capture, SSEParser, take_records, remember, serve
 from metrics import proxy_records
 
 
-def test_sse_capture_uses_response_model_and_final_usage():
+def test_sse_capture_keeps_only_first_char_output_tokens_and_response_model():
     capture = Capture("request-model", "s", "t")
     parser = SSEParser(capture)
     events = [
@@ -18,28 +18,26 @@ def test_sse_capture_uses_response_model_and_final_usage():
         {"type": "response.output_text.delta", "delta": "hello"},
         {"type": "response.completed", "response": {
             "id": "r1", "model": "actual-model",
-            "usage": {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 25},
-                       "output_tokens": 12, "output_tokens_details": {"reasoning_tokens": 2}},
+            "usage": {"output_tokens": 12},
         }},
     ]
     wire = b"".join(b"data: " + json.dumps(event).encode() + b"\n\n" for event in events)
     for offset in range(0, len(wire), 5):
         parser.feed(wire[offset:offset + 5])
     parser.finish()
-    assert capture.record["request_model_id"] == "request-model"
     assert capture.record["response_model_id"] == "actual-model"
-    assert capture.record["cache_hit_rate"] == 0.25
-    assert capture.record["non_reasoning_output_tokens"] == 10
+    assert capture.record["ttft_ms"] is not None
+    assert capture.record["output_tokens"] == 12
+    assert capture.record["generation_duration_ms"] is not None
+    assert "request_model_id" not in capture.record
+    assert "cache_hit_rate" not in capture.record
     assert capture.record["status"] == "completed"
 
 
-def test_capture_keeps_request_and_response_model_sources():
+def test_capture_reads_only_response_body_model():
     capture = Capture("requested-model", "s", "t")
-    capture.event({"type": "response.created", "response": {"id": "r2", "model": "served-model"}})
-    assert capture.record["request_model_id"] == "requested-model"
+    capture.event({"type": "response.created", "model": "not-from-response", "response": {"model": "served-model"}})
     assert capture.record["response_model_id"] == "served-model"
-    assert capture.record["request_model_source"] == "request.body.model"
-    assert capture.record["response_model_source"] == "response.model"
 
 
 def test_proxy_records_are_in_memory_only():

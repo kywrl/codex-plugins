@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 # 直接运行代理也不会因导入 metrics 而生成 __pycache__。
 sys.dont_write_bytecode = True
-from metrics import divide, usage
+from metrics import number
 
 MAX_BODY = 32 * 1024 * 1024
 MAX_EVENT = 8 * 1024 * 1024
@@ -29,18 +29,13 @@ REASONING_DELTAS = {"response.reasoning_text.delta", "response.reasoning_summary
 class Capture:
     def __init__(self, model, session=None, turn=None):
         self.started = time.perf_counter()
-        self.first_output = None
+        self.first_model_message = None
         self.published = False
         self.record = {
             "id": str(uuid.uuid4()), "session_id": session, "turn_id": turn,
-            "request_model_id": model, "response_model_id": None,
-            "status": "streaming", "ttft_ms": None, "first_text_ms": None,
-            "request_duration_ms": None, "generation_duration_ms": None,
-            "output_tokens": None, "non_reasoning_output_tokens": None,
-            "generation_tokens_per_second": None,
-            "cache_hit_rate": None, "usage": None,
-            "request_model_source": "request.body.model",
-            "response_model_source": "response.model",
+            "response_model_id": None,
+            "status": "streaming", "ttft_ms": None,
+            "generation_duration_ms": None, "output_tokens": None,
         }
 
     def event(self, event, elapsed_ms=None):
@@ -51,37 +46,25 @@ class Capture:
         if kind in OUTPUT_DELTAS | REASONING_DELTAS and isinstance(event.get("delta"), str) and event["delta"]:
             if self.record["ttft_ms"] is None:
                 self.record["ttft_ms"] = elapsed
-            if kind in OUTPUT_DELTAS and self.first_output is None:
-                self.first_output = elapsed
-            if kind in ("response.output_text.delta", "response.refusal.delta") and self.record["first_text_ms"] is None:
-                self.record["first_text_ms"] = elapsed
+                self.first_model_message = elapsed
         response = event.get("response") or {}
         if not isinstance(response, dict):
             response = {}
-        response_model = response.get("model") if isinstance(response.get("model"), str) else event.get("model")
+        response_model = response.get("model")
         if isinstance(response_model, str):
             self.record["response_model_id"] = response_model
-        if isinstance(response.get("id"), str):
-            self.record["response_id"] = response["id"]
         if kind in ("response.completed", "response.failed", "response.incomplete", "error"):
             self.record["status"] = {"response.completed": "completed", "response.incomplete": "incomplete"}.get(kind, "failed")
-            self.record["request_duration_ms"] = elapsed
-            tokens = usage(response.get("usage"))
-            self.record["usage"] = tokens
-            self.record["output_tokens"] = tokens["output_tokens"]
-            self.record["cache_hit_rate"] = divide(tokens["cached_input_tokens"], tokens["input_tokens"])
-            total, reasoning = tokens["output_tokens"], tokens["reasoning_output_tokens"]
-            visible = total - reasoning if total is not None and reasoning is not None and total >= reasoning else None
-            self.record["non_reasoning_output_tokens"] = visible
-            duration = elapsed - self.first_output if self.first_output is not None else None
+            usage = response.get("usage")
+            usage = usage if isinstance(usage, dict) else {}
+            self.record["output_tokens"] = number(usage.get("output_tokens"))
+            duration = elapsed - self.first_model_message if self.first_model_message is not None else None
             if duration is not None and duration > 0:
                 self.record["generation_duration_ms"] = duration
-                self.record["generation_tokens_per_second"] = divide(visible, duration / 1000)
 
     def finish(self):
         if self.record["status"] == "streaming":
             self.record["status"] = "disconnected"
-            self.record["request_duration_ms"] = (time.perf_counter() - self.started) * 1000
 
 
 class SSEParser:
